@@ -13,8 +13,8 @@ const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || '';
 const app = express();
 const server = createServer(app);
 
-// Serve voice client static files
-const clientDir = path.resolve(import.meta.dirname, '..', '..', 'voice-client');
+// Serve voice client static files (bundled in public/)
+const clientDir = path.resolve(import.meta.dirname, '..', 'public');
 app.use(express.static(clientDir));
 
 // Health endpoint
