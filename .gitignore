@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+dev-assistant/audit.log
+dev-assistant/context.json
+dev-assistant/session-notes.md
+.claude/

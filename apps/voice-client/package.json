@@ -1,0 +1,6 @@
+{
+  "name": "@smartdev/voice-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Voice client — no build step, served as static files by the orchestrator"
+}
