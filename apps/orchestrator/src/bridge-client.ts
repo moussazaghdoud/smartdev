@@ -1,58 +1,88 @@
-/** HTTP client to communicate with the local bridge */
+/** Bridge client — communicates with local bridge via its WebSocket connection */
 
-const BRIDGE_URL = () => `http://127.0.0.1:${process.env.BRIDGE_PORT || '7700'}`;
-const BRIDGE_TOKEN = () => process.env.BRIDGE_TOKEN || '';
+import type { WebSocket } from 'ws';
+import { randomUUID } from 'node:crypto';
 
-async function bridgeRequest(method: string, path: string, body?: unknown): Promise<unknown> {
-  const url = `${BRIDGE_URL()}${path}`;
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${BRIDGE_TOKEN()}`,
-    'Content-Type': 'application/json',
-  };
+// The bridge WebSocket connection (set when bridge connects)
+let bridgeSocket: WebSocket | null = null;
+let bridgeProjectRoot: string = '';
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
+// Pending tool call responses
+const pendingCalls = new Map<string, {
+  resolve: (value: unknown) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+export function isBridgeConnected(): boolean {
+  return bridgeSocket !== null && bridgeSocket.readyState === bridgeSocket.OPEN;
+}
+
+export function getBridgeProjectRoot(): string {
+  return bridgeProjectRoot;
+}
+
+export function registerBridge(ws: WebSocket, projectRoot: string): void {
+  bridgeSocket = ws;
+  bridgeProjectRoot = projectRoot;
+  console.log(`[bridge-client] Bridge registered (project: ${projectRoot})`);
+
+  ws.on('message', (raw: Buffer) => {
+    let msg: { id?: string; type?: string; result?: unknown; error?: string };
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    if (msg.id && msg.type === 'tool_result' && pendingCalls.has(msg.id)) {
+      const pending = pendingCalls.get(msg.id)!;
+      clearTimeout(pending.timer);
+      pendingCalls.delete(msg.id);
+      pending.resolve(msg.result);
+    }
+
+    if (msg.id && msg.type === 'tool_error' && pendingCalls.has(msg.id)) {
+      const pending = pendingCalls.get(msg.id)!;
+      clearTimeout(pending.timer);
+      pendingCalls.delete(msg.id);
+      pending.reject(new Error(msg.error || 'Bridge tool error'));
+    }
   });
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error((data as { error?: string }).error || `Bridge returned ${res.status}`);
+  ws.on('close', () => {
+    console.log('[bridge-client] Bridge disconnected');
+    bridgeSocket = null;
+    bridgeProjectRoot = '';
+    // Reject all pending calls
+    for (const [id, pending] of pendingCalls) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Bridge disconnected'));
+      pendingCalls.delete(id);
+    }
+  });
+}
+
+/** Send a tool call to the bridge and wait for the response */
+function callBridge(tool: string, input: Record<string, string> = {}): Promise<unknown> {
+  if (!isBridgeConnected()) {
+    return Promise.reject(new Error('Local bridge is not connected. Make sure the bridge is running on your dev machine.'));
   }
-  return data;
+
+  const id = randomUUID();
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingCalls.delete(id);
+      reject(new Error(`Bridge tool call "${tool}" timed out after 60s`));
+    }, 60_000);
+
+    pendingCalls.set(id, { resolve, reject, timer });
+    bridgeSocket!.send(JSON.stringify({ id, tool, input }));
+  });
 }
 
-export async function bridgeHealth(): Promise<unknown> {
-  // Health doesn't need auth
-  const res = await fetch(`${BRIDGE_URL()}/health`);
-  return res.json();
-}
-
-export async function bridgeReadFile(filePath: string): Promise<unknown> {
-  return bridgeRequest('POST', '/readFile', { path: filePath });
-}
-
-export async function bridgeSearch(query: string, root?: string): Promise<unknown> {
-  return bridgeRequest('POST', '/search', { query, root });
-}
-
-export async function bridgeGitStatus(): Promise<unknown> {
-  return bridgeRequest('GET', '/git/status');
-}
-
-export async function bridgeGitDiff(): Promise<unknown> {
-  return bridgeRequest('GET', '/git/diff');
-}
-
-export async function bridgeRun(commandName: string): Promise<unknown> {
-  return bridgeRequest('POST', '/run', { commandName });
-}
-
-export async function bridgePatchPrepare(diff: string): Promise<unknown> {
-  return bridgeRequest('POST', '/patch/prepare', { diff });
-}
-
-export async function bridgePatchApply(patchId: string): Promise<unknown> {
-  return bridgeRequest('POST', '/patch/apply', { patchId });
-}
+// Public API — same interface as before
+export function bridgeReadFile(filePath: string) { return callBridge('read_file', { path: filePath }); }
+export function bridgeSearch(query: string, root?: string) { return callBridge('search_code', { query, ...(root ? { root } : {}) }); }
+export function bridgeGitStatus() { return callBridge('git_status'); }
+export function bridgeGitDiff() { return callBridge('git_diff'); }
+export function bridgeRun(commandName: string) { return callBridge('run_command', { commandName }); }
+export function bridgePatchPrepare(diff: string) { return callBridge('patch_prepare', { diff }); }
+export function bridgePatchApply(patchId: string) { return callBridge('patch_apply', { patchId }); }

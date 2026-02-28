@@ -5,84 +5,80 @@ Talk to Claude from any device while it stays connected to your VS Code workspac
 ## Architecture
 
 ```
-[Browser / Phone]  ──WebSocket──▶  [Orchestrator :7800]
-       │                                │          │
-  Web Speech API                  Claude API   HTTP calls
-  (STT in browser)                                │
-                                         [Local Bridge :7700]
-                                               │
-                                         [Your Repo]
+[Phone / Browser]  ──HTTPS──▶  [Railway: Orchestrator + Voice Client]
+                                        ▲
+                                 WebSocket (outbound)
+                                        │
+                                [Your PC: Local Bridge]
+                                        │
+                                 [Your Repo on disk]
 ```
 
-**3 components:**
-- **Local Bridge** — Secure Node.js service on `127.0.0.1:7700`. Reads files, searches code, runs git commands, executes allowlisted commands (test/lint/build), prepares and applies patches. Audit-logged.
-- **Orchestrator** — Express + WebSocket server on port `7800`. Routes messages between client and Claude, manages tool calls to the bridge, handles confirmations.
-- **Voice Client** — Plain HTML/CSS/JS served by the orchestrator. Push-to-talk mic (Web Speech API), text input, confirmation buttons. Works on mobile.
+- **Orchestrator** (cloud/Railway) — Express + WebSocket server. Hosts voice client, routes messages between client ↔ Claude ↔ bridge. Handles confirmations.
+- **Voice Client** (cloud, served by orchestrator) — Plain HTML/CSS/JS. Push-to-talk mic (Web Speech API), text input, confirmation buttons. Mobile-first.
+- **Local Bridge** (your dev machine) — Connects *outbound* to the orchestrator via WebSocket. Reads files, searches code, git status/diff, runs allowlisted commands, prepares/applies patches. Audit-logged.
 
-## Quick Start
+**You only run one thing locally: the bridge.** Everything else is in the cloud.
 
-### 1. Install
+## Setup
+
+### 1. Deploy Orchestrator on Railway
+
+Set these environment variables on your Railway service:
+```
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+BRIDGE_TOKEN=some-random-secret
+CLIENT_PASSCODE=dev123
+PORT=7800
+```
+
+Railway will auto-detect the monorepo. Point it to the `apps/orchestrator` root path.
+
+### 2. Run Bridge Locally
 
 ```bash
 npm install
 ```
 
-### 2. Configure
-
-```bash
-cp .env.example .env
+Create `apps/local-bridge/.env`:
+```
+ORCHESTRATOR_URL=wss://your-railway-app.up.railway.app
+BRIDGE_TOKEN=same-secret-as-orchestrator
+PROJECT_ROOT=C:\Users\you\your-project
 ```
 
-Edit `.env`:
-```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-BRIDGE_TOKEN=some-random-secret
-BRIDGE_PORT=7700
-ORCHESTRATOR_PORT=7800
-PROJECT_ROOT=/path/to/your/repo
-CLIENT_PASSCODE=dev123
-```
-
-### 3. Run (2 terminals)
-
-**Terminal 1 — Bridge:**
+Start the bridge:
 ```bash
 cd apps/local-bridge
-cp ../../.env .env
 npm run dev
 ```
 
-**Terminal 2 — Orchestrator:**
-```bash
-cd apps/orchestrator
-npm run dev
-```
+The bridge connects outbound to Railway — no ports to open, no tunnels needed.
 
-### 4. Open
+### 3. Open from Any Device
 
-Go to `http://localhost:7800` in any browser (phone or desktop).
+Go to `https://your-railway-app.up.railway.app` on your phone or desktop.
 Enter the passcode, tap the mic, and speak.
 
-## Bridge API
+## Bridge Tools
 
-All endpoints (except `/health`) require `Authorization: Bearer <BRIDGE_TOKEN>`.
+The bridge exposes these tools to Claude (via WebSocket, not HTTP):
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check |
-| POST | `/readFile` | Read a file `{ path }` |
-| POST | `/search` | Search code `{ query, root?, glob? }` |
-| GET | `/git/status` | Git status |
-| GET | `/git/diff` | Git diff (staged + unstaged) |
-| POST | `/run` | Run allowlisted command `{ commandName }` |
-| POST | `/patch/prepare` | Stage a patch `{ diff }` → returns `patchId` |
-| POST | `/patch/apply` | Apply a patch `{ patchId }` (needs confirmation) |
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read a file from the project |
+| `search_code` | Search text across project files |
+| `git_status` | Git branch + status |
+| `git_diff` | Staged + unstaged diffs |
+| `run_command` | Run allowlisted command (test/lint/build only) |
+| `patch_prepare` | Stage a unified diff for review |
+| `patch_apply` | Apply a prepared patch (requires confirmation) |
 
 ## Security
 
-- Bridge binds to `127.0.0.1` only — not accessible from the network
-- Shared token auth on all bridge endpoints
-- Path traversal prevention on file reads
+- Bridge makes outbound connections only — no open ports
+- Shared `BRIDGE_TOKEN` authenticates the bridge ↔ orchestrator link
+- Path traversal prevention on all file reads
 - Command allowlist — only `test`, `lint`, `build`
 - Audit log of all bridge calls in `dev-assistant/audit.log`
 
@@ -94,4 +90,4 @@ npx tsx --test tests/*.test.ts
 
 ## Confirmation Flow
 
-When Claude needs to do something destructive (like applying a patch), the orchestrator pauses and sends a confirmation to the client. The client shows big tap-friendly buttons. You respond by tapping or speaking, and the operation proceeds or cancels.
+When Claude needs to do something destructive (like applying a patch), the orchestrator pauses and sends a confirmation to the voice client. Big tap-friendly buttons appear. You respond by tapping or speaking, and the operation proceeds or cancels.
