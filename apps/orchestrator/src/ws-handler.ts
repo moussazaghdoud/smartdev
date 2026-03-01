@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 import { processMessage, resumeWithToolResult, type ConversationTurn } from './claude.js';
 import { createConfirmationState, type ConfirmationState } from './confirmation.js';
+import { registerClient, handleExternalConfirmResponse } from './external-confirm.js';
 import { addTranscript } from './session.js';
 
 interface ClientMessage {
@@ -8,6 +9,7 @@ interface ClientMessage {
   content?: string;
   choice?: number;
   passcode?: string;
+  externalId?: string;
 }
 
 interface ServerMessage {
@@ -46,6 +48,7 @@ export function handleConnection(ws: WebSocket): void {
     if (msg.type === 'auth') {
       if (!passcode || msg.passcode === passcode) {
         authenticated = true;
+        registerClient(ws);
         send({ type: 'auth_ok', content: 'Authenticated' });
         addTranscript('system', 'Client connected and authenticated');
       } else {
@@ -60,6 +63,17 @@ export function handleConnection(ws: WebSocket): void {
     }
 
     // Handle confirmation response
+    if (msg.type === 'confirm' && msg.externalId) {
+      // External confirmation from Claude Code
+      const handled = handleExternalConfirmResponse(msg.externalId, msg.choice ?? 0);
+      if (handled) {
+        send({ type: 'status', content: 'Response sent to Claude Code.' });
+      } else {
+        send({ type: 'error', content: 'Confirmation expired or not found.' });
+      }
+      return;
+    }
+
     if (msg.type === 'confirm' && confirmState.pending) {
       const choice = msg.choice ?? 0;
       const approved = choice === 1;

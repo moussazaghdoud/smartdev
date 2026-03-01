@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import path from 'node:path';
 import { handleConnection } from './ws-handler.js';
 import { registerBridge, isBridgeConnected } from './bridge-client.js';
+import { requestExternalConfirm, getClientCount } from './external-confirm.js';
 import { saveSessionNotes } from './session.js';
 
 const PORT = parseInt(process.env.PORT || process.env.ORCHESTRATOR_PORT || '7800', 10);
@@ -27,6 +28,34 @@ app.get('/api/health', (_req, res) => {
     bridgeTokenPrefix: BRIDGE_TOKEN.substring(0, 4) || '(empty)',
     timestamp: new Date().toISOString(),
   });
+});
+
+// JSON body parsing for API endpoints
+app.use(express.json());
+
+// External confirmation endpoint — Claude Code sends confirmations here
+app.post('/api/confirm', async (req, res) => {
+  // Auth: require bridge token
+  const auth = req.headers.authorization;
+  const isAuthed = !BRIDGE_TOKEN || auth === `Bearer ${BRIDGE_TOKEN}`;
+  if (!isAuthed) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const { question, options } = req.body as { question?: string; options?: string[] };
+  if (!question || !options || !Array.isArray(options)) {
+    res.status(400).json({ error: 'Missing question or options' });
+    return;
+  }
+
+  try {
+    const result = await requestExternalConfirm(question, options);
+    res.json({ confirmed: true, choice: result.choice, option: result.option });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(408).json({ error: msg });
+  }
 });
 
 // WebSocket server for voice clients

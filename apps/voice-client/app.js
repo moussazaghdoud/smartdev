@@ -122,9 +122,11 @@
 
   function showConfirmation(data) {
     confirmPanel.classList.remove('hidden');
-    confirmQuestion.textContent = data.question || 'Confirm this action?';
+    var source = data.source === 'claude-code' ? '[Claude Code] ' : '';
+    confirmQuestion.textContent = source + (data.question || 'Confirm this action?');
     confirmButtons.innerHTML = '';
 
+    var externalId = data.externalId || null;
     var options = data.options || ['Yes', 'No'];
     options.forEach(function (opt, i) {
       var btn = document.createElement('button');
@@ -135,9 +137,11 @@
       btn.textContent = opt;
       btn.onclick = function () {
         confirmPanel.classList.add('hidden');
-        ws.send(JSON.stringify({ type: 'confirm', choice: i + 1 }));
+        var msg = { type: 'confirm', choice: i + 1 };
+        if (externalId) msg.externalId = externalId;
+        ws.send(JSON.stringify(msg));
         addMessage('user', 'Chose: ' + opt);
-        setStatus('thinking', 'Processing...');
+        setStatus('connected', 'Connected');
       };
       confirmButtons.appendChild(btn);
     });
