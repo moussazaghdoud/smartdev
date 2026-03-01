@@ -23,6 +23,8 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     service: 'orchestrator',
     bridgeConnected: isBridgeConnected(),
+    bridgeTokenLength: BRIDGE_TOKEN.length,
+    bridgeTokenPrefix: BRIDGE_TOKEN.substring(0, 4) || '(empty)',
     timestamp: new Date().toISOString(),
   });
 });
