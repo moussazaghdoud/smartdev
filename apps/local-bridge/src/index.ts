@@ -159,8 +159,8 @@ function runGit(args: string[]): Promise<string> {
 
 /** Connect to orchestrator via WebSocket */
 function connect() {
-  const wsUrl = `${ORCHESTRATOR_URL}/bridge-ws`;
-  console.log(`[bridge] Connecting to ${wsUrl}...`);
+  const wsUrl = `${ORCHESTRATOR_URL}/bridge-ws?token=${encodeURIComponent(BRIDGE_TOKEN)}`;
+  console.log(`[bridge] Connecting to ${ORCHESTRATOR_URL}/bridge-ws...`);
 
   const ws = new WebSocket(wsUrl, {
     headers: { 'Authorization': `Bearer ${BRIDGE_TOKEN}` },

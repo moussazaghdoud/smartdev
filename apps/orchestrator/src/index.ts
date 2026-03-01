@@ -53,10 +53,15 @@ bridgeWss.on('connection', (ws) => {
 server.on('upgrade', (request, socket, head) => {
   const { pathname } = new URL(request.url || '/', `http://${request.headers.host}`);
 
-  if (pathname === '/bridge-ws') {
-    // Authenticate bridge connection
+  if (pathname.startsWith('/bridge-ws')) {
+    // Authenticate bridge connection (support header or query string token)
+    const url = new URL(request.url || '/', `http://${request.headers.host}`);
     const auth = request.headers.authorization;
-    if (BRIDGE_TOKEN && auth !== `Bearer ${BRIDGE_TOKEN}`) {
+    const queryToken = url.searchParams.get('token');
+    const isAuthed = !BRIDGE_TOKEN
+      || auth === `Bearer ${BRIDGE_TOKEN}`
+      || queryToken === BRIDGE_TOKEN;
+    if (!isAuthed) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
